@@ -324,9 +324,9 @@ class DualReportService {
     int? year,
   ) async {
     try {
-      // 定义时间范围
+      // 定义时间范围（全部时间时不加上界过滤）
       int startTimestamp = 0;
-      int endTimestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      int endTimestamp = 0;
 
       if (year != null) {
         final startOfYear = DateTime(year, 1, 1);
