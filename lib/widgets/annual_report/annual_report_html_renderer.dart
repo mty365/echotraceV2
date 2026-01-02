@@ -77,6 +77,9 @@ class AnnualReportHtmlRenderer {
     final whoRepliesFastest = (reportData['whoRepliesFastest'] as List?) ?? [];
     final myFastestReplies = (reportData['myFastestReplies'] as List?) ?? [];
 
+    final wordCloudData = reportData['wordCloud'] as Map<String, dynamic>? ?? {};
+    final wordCloudWords = (wordCloudData['words'] as List?) ?? [];
+
     final formerFriends = (reportData['formerFriends'] as List?) ?? [];
     final formerFriendsStats = reportData['formerFriendsStats'] as Map<String, dynamic>?;
     final includeFormerFriends = year == null;
@@ -132,6 +135,9 @@ class AnnualReportHtmlRenderer {
 
     buffer.writeln(_section('response', 'response', 
       _buildResponseHtml(whoRepliesFastest, myFastestReplies)));
+
+    buffer.writeln(_section('wordcloud', 'wordcloud', 
+      _buildWordCloudBody(wordCloudWords)));
 
     if (includeFormerFriends) {
       buffer.writeln(_section('former', 'former', 
@@ -381,11 +387,106 @@ section.page.visible .content-wrapper {
   text-transform: uppercase;
 }
 
+.word-cloud-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 30px 20px;
+  background: linear-gradient(135deg, rgba(7, 193, 96, 0.03) 0%, rgba(242, 170, 0, 0.03) 100%);
+  border-radius: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+  line-height: 1.8;
+}
+.word-tag {
+  display: inline-block;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  cursor: default;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.word-tag:hover {
+  transform: scale(1.1);
+  background: rgba(7, 193, 96, 0.1);
+}
+
+.sentence-cloud-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 30px 20px;
+  background: linear-gradient(135deg, rgba(7, 193, 96, 0.03) 0%, rgba(242, 170, 0, 0.03) 100%);
+  border-radius: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.sentence-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  cursor: help;
+  border-left: 4px solid currentColor;
+}
+.sentence-item:hover {
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+.sentence-text {
+  flex: 1;
+  font-weight: 500;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.sentence-count {
+  margin-left: 16px;
+  font-size: 0.7em;
+  opacity: 0.7;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .nav-dots { position: fixed; top: 50%; right: 20px; transform: translateY(-50%); display: flex; flex-direction: column; gap: 12px; z-index: 100; }
 .dot { width: 8px; height: 8px; background: rgba(0,0,0,0.15); border-radius: 50%; cursor: pointer; transition: all 0.3s; }
 .dot.active { background: var(--primary); transform: scale(1.4); box-shadow: 0 0 10px rgba(7, 193, 96, 0.4); }
 
-.capture-btn { margin-top: 40px; padding: 14px 28px; border-radius: 99px; background: var(--primary); color: white; border: none; font-size: 16px; font-weight: 600; box-shadow: 0 4px 12px rgba(7, 193, 96, 0.3); cursor: pointer; width: 100%; max-width: 240px; }
+.capture-btn { margin-top: 40px; padding: 14px 28px; border-radius: 99px; background: var(--primary); color: white; border: none; font-size: 16px; font-weight: 600; box-shadow: 0 4px 12px rgba(7, 193, 96, 0.3); cursor: pointer; width: 100%; max-width: 240px; transition: all 0.3s ease; }
+.capture-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(7, 193, 96, 0.4); }
+.capture-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+.capture-btn.module-btn { margin-top: 0; background: var(--accent); box-shadow: 0 4px 12px rgba(242, 170, 0, 0.3); }
+.capture-btn.module-btn:hover { box-shadow: 0 6px 16px rgba(242, 170, 0, 0.4); }
+
+.module-progress { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 32px 48px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); z-index: 10001; text-align: center; min-width: 280px; }
+.module-progress h3 { margin: 0 0 16px; font-size: 18px; color: var(--text-main); }
+.module-progress .progress-bar { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+.module-progress .progress-fill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
+.module-progress .progress-text { font-size: 14px; color: var(--text-sub); }
+
+.module-selector-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 10001; display: flex; justify-content: center; align-items: center; }
+.module-selector-content { background: white; padding: 28px 32px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 400px; width: 90%; max-height: 80vh; display: flex; flex-direction: column; }
+.module-selector-content h3 { margin: 0 0 20px; font-size: 20px; color: var(--text-main); text-align: center; }
+.module-list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; padding-right: 8px; margin-bottom: 20px; }
+.module-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f8f8f8; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+.module-item:hover { background: #f0f0f0; }
+.module-item input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
+.module-item span { font-size: 14px; color: var(--text-main); }
+.module-selector-actions { display: flex; gap: 10px; justify-content: center; }
+.select-action-btn { padding: 6px 16px; border: 1px solid #ddd; background: white; border-radius: 6px; font-size: 13px; color: #666; cursor: pointer; transition: all 0.2s; }
+.select-action-btn:hover { background: #f5f5f5; border-color: #ccc; }
+.module-selector-buttons { display: flex; gap: 12px; justify-content: center; }
+.module-selector-buttons .cancel-btn { padding: 12px 28px; border: 1px solid #ddd; background: white; border-radius: 99px; font-size: 15px; color: #666; cursor: pointer; transition: all 0.2s; }
+.module-selector-buttons .cancel-btn:hover { background: #f5f5f5; }
+.module-selector-buttons .confirm-btn { padding: 12px 28px; border: none; background: var(--primary); border-radius: 99px; font-size: 15px; color: white; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(7, 193, 96, 0.3); transition: all 0.2s; }
+.module-selector-buttons .confirm-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(7, 193, 96, 0.4); }
 
 .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9999; justify-content: center; align-items: center; }
 .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 90%; max-width: 500px; display: flex; flex-direction: column; align-items: center; }
@@ -597,6 +698,72 @@ $heatmap
 ''';
   }
 
+  static String _buildWordCloudBody(List words) {
+    if (words.isEmpty) {
+      return '''
+<div class="label-text">年度词云</div>
+<div class="hero-title">暂无数据</div>
+<div class="hero-desc">需要足够的文本消息才能生成</div>
+''';
+    }
+
+    // 获取最大句子频率用于计算字体大小
+    final maxCount = words.isNotEmpty 
+        ? _parseNum((words.first as Map)['count']).toInt() 
+        : 1;
+    
+    // 构建句子列表（显示前30个高频句子）
+    final sentenceItems = words.take(30).map((item) {
+      final sentence = _escapeHtml((item as Map)['word'] ?? '');
+      final count = _parseNum(item['count']).toInt();
+      
+      // 根据频率计算字体大小 (16px - 32px)
+      final ratio = count / maxCount;
+      final fontSize = (16 + ratio * 16).round();
+      
+      // 根据频率选择颜色
+      String color;
+      if (ratio > 0.7) {
+        color = '#07C160'; // 高频句子用主题绿色
+      } else if (ratio > 0.4) {
+        color = '#F2AA00'; // 中频句子用金色
+      } else if (ratio > 0.2) {
+        color = '#333333'; // 较低频句子用深灰
+      } else {
+        color = '#666666'; // 低频句子用浅灰
+      }
+      
+      // 如果句子太长，截断并添加省略号
+      String displaySentence = sentence;
+      if (sentence.length > 50) {
+        displaySentence = sentence.substring(0, 47) + '...';
+      }
+      
+      return '''
+<div class="sentence-item" style="font-size: ${fontSize}px; color: $color;" title="$sentence (出现 $count 次)">
+  <span class="sentence-text">$displaySentence</span>
+  <span class="sentence-count">$count</span>
+</div>''';
+    }).join('');
+
+    // 获取前3个高频句子展示
+    final topThree = words.take(3).map((item) {
+      final sentence = _escapeHtml((item as Map)['word'] ?? '');
+      final count = _parseNum(item['count']).toInt();
+      // 截断长句子
+      String display = sentence.length > 20 ? sentence.substring(0, 17) + '...' : sentence;
+      return '$display($count)';
+    }).join('、');
+
+    return '''
+<div class="label-text">年度词云</div>
+<div class="hero-title">你的年度常用语</div>
+<div class="hero-desc" style="margin-bottom: 30px;">这一年，你说得最多的是：<br><span class="hl" style="font-size: 20px;">$topThree</span></div>
+<div class="sentence-cloud-container">$sentenceItems</div>
+<div class="hero-desc" style="margin-top: 30px; font-size: 14px; color: #999;">每个句子的大小和颜色代表它出现的频率</div>
+''';
+  }
+
   static String _buildFormerBody(List former, Map? stats, NumberFormat fmt) {
     if (former.isEmpty) {
       String message = AnnualReportTexts.formerFriendNoData;
@@ -638,8 +805,9 @@ $heatmap
 <div class="hero-desc" style="max-width: 100%; margin-top: 40px;">我们总是在向前走<br>却很少有机会回头看看<br>如果这份报告让你有所触动，不妨把它分享给你在意的人<br>愿新的一年，<br>所有期待，皆有回声。</div>
 <hr class="divider" style="margin: 60px 0 30px;">
 <div class="label-text" style="color: var(--text-main);">ECHO TRACE</div>
-<div style="text-align: center; margin-bottom: 40px;">
+<div style="text-align: center; margin-bottom: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px;">
   <button class="capture-btn" onclick="takeScreenshot()">生成年度长图报告</button>
+  <button class="capture-btn module-btn" onclick="takeModuleScreenshots()">分模块导出图片</button>
 </div>
 ''';
   }
@@ -800,6 +968,275 @@ $heatmap
       });
       location.reload();
     }
+  }
+
+  // 模块名称映射
+  const moduleNames = {
+    'cover': '封面',
+    'intro': '年度概览',
+    'friendship': '年度挚友',
+    'monthly': '月度好友',
+    'mutual': '双向奔赴',
+    'initiative': '社交主动性',
+    'peak': '巅峰时刻',
+    'checkin': '聊天火花',
+    'activity': '作息规律',
+    'midnight': '深夜好友',
+    'response': '回应速度',
+    'wordcloud': '年度词云',
+    'former': '曾经的好朋友',
+    'ending': '尾声'
+  };
+
+  // 显示模块选择弹窗
+  function showModuleSelector() {
+    const sections = document.querySelectorAll('section.page');
+    const sectionIds = Array.from(sections).map(s => s.id);
+    
+    const modal = document.createElement('div');
+    modal.className = 'module-selector-modal';
+    modal.innerHTML = \`
+      <div class="module-selector-content">
+        <h3>选择要导出的模块</h3>
+        <div class="module-selector-actions" style="margin-bottom: 16px;">
+          <button type="button" onclick="toggleAllModules(true)" class="select-action-btn">全选</button>
+          <button type="button" onclick="toggleAllModules(false)" class="select-action-btn">全不选</button>
+        </div>
+        <div class="module-list">
+          \${sectionIds.map((id, index) => \`
+            <label class="module-item">
+              <input type="checkbox" value="\${id}" checked>
+              <span>\${(index + 1).toString().padStart(2, '0')}. \${moduleNames[id] || id}</span>
+            </label>
+          \`).join('')}
+        </div>
+        <div class="module-selector-buttons">
+          <button type="button" onclick="closeModuleSelector()" class="cancel-btn">取消</button>
+          <button type="button" onclick="startModuleExport()" class="confirm-btn">开始导出</button>
+        </div>
+      </div>
+    \`;
+    document.body.appendChild(modal);
+    
+    window.toggleAllModules = (checked) => {
+      modal.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = checked);
+    };
+    
+    window.closeModuleSelector = () => {
+      modal.remove();
+      delete window.toggleAllModules;
+      delete window.closeModuleSelector;
+      delete window.startModuleExport;
+    };
+    
+    window.startModuleExport = async () => {
+      const selectedIds = Array.from(modal.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+      modal.remove();
+      delete window.toggleAllModules;
+      delete window.closeModuleSelector;
+      delete window.startModuleExport;
+      
+      if (selectedIds.length === 0) {
+        alert('请至少选择一个模块');
+        return;
+      }
+      
+      await exportSelectedModules(selectedIds);
+    };
+  }
+
+  async function takeModuleScreenshots() {
+    showModuleSelector();
+  }
+  
+  async function exportSelectedModules(selectedIds) {
+    const allSections = document.querySelectorAll('section.page');
+    const sections = Array.from(allSections).filter(s => selectedIds.includes(s.id));
+    const dots = document.querySelector('.nav-dots');
+    const allBtns = document.querySelectorAll('.capture-btn');
+    
+    // 禁用所有按钮
+    allBtns.forEach(btn => btn.disabled = true);
+    if(dots) dots.style.display = 'none';
+    
+    // 创建进度提示
+    const progressDiv = document.createElement('div');
+    progressDiv.className = 'module-progress';
+    progressDiv.innerHTML = '<h3>正在生成模块图片</h3><div class="progress-bar"><div class="progress-fill" style="width: 0%"></div></div><div class="progress-text">准备中...</div>';
+    document.body.appendChild(progressDiv);
+    
+    const progressFill = progressDiv.querySelector('.progress-fill');
+    const progressText = progressDiv.querySelector('.progress-text');
+    
+    const images = [];
+    const total = sections.length;
+    
+    // 固定输出尺寸 1920x1080
+    const TARGET_WIDTH = 1920;
+    const TARGET_HEIGHT = 1080;
+    const BG_COLOR = '#F9F8F6';
+    
+    try {
+      for (let i = 0; i < total; i++) {
+        const section = sections[i];
+        const sectionId = section.id;
+        const moduleIndex = selectedIds.indexOf(sectionId) + 1;
+        const moduleName = moduleIndex.toString().padStart(2, '0') + '_' + (moduleNames[sectionId] || sectionId);
+        
+        progressText.textContent = '正在处理: ' + moduleNames[sectionId] + ' (' + (i + 1) + '/' + total + ')';
+        progressFill.style.width = ((i / total) * 100) + '%';
+        
+        // 准备单个模块的截图
+        const originalStyle = section.style.cssText;
+        
+        // 设置固定宽度（scale=2时实际输出为1920px）
+        section.style.width = (TARGET_WIDTH / 2) + 'px';
+        section.style.minHeight = 'auto';
+        section.style.height = 'auto';
+        section.style.paddingTop = '60px';
+        section.style.paddingBottom = '60px';
+        section.style.boxSizing = 'border-box';
+        
+        const wrapper = section.querySelector('.content-wrapper');
+        const wrapperOriginalStyle = wrapper ? wrapper.style.cssText : '';
+        if(wrapper) {
+          wrapper.style.opacity = '1';
+          wrapper.style.transform = 'translateY(0)';
+          wrapper.style.animation = 'none';
+          wrapper.style.maxWidth = '100%';
+        }
+        
+        // 隐藏结尾页的按钮
+        if(sectionId === 'ending') {
+          const btnsContainer = section.querySelector('div[style*="flex-direction: column"]');
+          if(btnsContainer) btnsContainer.style.display = 'none';
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // 先截取内容
+        const contentCanvas = await html2canvas(section, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: BG_COLOR,
+          allowTaint: true,
+          logging: false,
+          width: TARGET_WIDTH / 2,
+        });
+        
+        // 创建固定尺寸的画布 1920x1080
+        const finalCanvas = document.createElement('canvas');
+        finalCanvas.width = TARGET_WIDTH;
+        finalCanvas.height = TARGET_HEIGHT;
+        const ctx = finalCanvas.getContext('2d');
+        
+        // 填充背景色
+        ctx.fillStyle = BG_COLOR;
+        ctx.fillRect(0, 0, TARGET_WIDTH, TARGET_HEIGHT);
+        
+        // 计算内容在画布上的位置（居中显示）
+        const contentHeight = contentCanvas.height;
+        const contentWidth = contentCanvas.width;
+        
+        // 如果内容超出画布，需要缩放
+        let drawWidth = contentWidth;
+        let drawHeight = contentHeight;
+        let scale = 1;
+        
+        // 计算缩放比例（保持宽高比）
+        const scaleX = TARGET_WIDTH / contentWidth;
+        const scaleY = TARGET_HEIGHT / contentHeight;
+        scale = Math.min(scaleX, scaleY, 1); // 不放大，只缩小
+        
+        if (scale < 1) {
+          drawWidth = contentWidth * scale;
+          drawHeight = contentHeight * scale;
+        }
+        
+        // 居中绘制
+        const x = (TARGET_WIDTH - drawWidth) / 2;
+        const y = (TARGET_HEIGHT - drawHeight) / 2;
+        
+        ctx.drawImage(contentCanvas, x, y, drawWidth, drawHeight);
+        
+        // 恢复样式
+        section.style.cssText = originalStyle;
+        if(wrapper) wrapper.style.cssText = wrapperOriginalStyle;
+        if(sectionId === 'ending') {
+          const btnsContainer = section.querySelector('div[style*="flex-direction: column"]');
+          if(btnsContainer) btnsContainer.style.display = 'flex';
+        }
+        
+        images.push({
+          name: moduleName + '.png',
+          data: finalCanvas.toDataURL('image/png')
+        });
+      }
+      
+      progressText.textContent = '正在打包下载...';
+      progressFill.style.width = '100%';
+      
+      // 检测是否为移动端
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      if (isMobile) {
+        progressDiv.remove();
+        await showMobileImages(images);
+      } else {
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          const link = document.createElement('a');
+          link.download = img.name;
+          link.href = img.data;
+          link.click();
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        
+        progressDiv.remove();
+        alert('已成功导出 ' + images.length + ' 张模块图片！\\n\\n图片尺寸: 1920x1080');
+      }
+      
+    } catch (err) {
+      console.error(err);
+      progressDiv.remove();
+      alert('生成失败：' + err.message);
+    } finally {
+      allBtns.forEach(btn => btn.disabled = false);
+      if(dots) dots.style.display = 'flex';
+    }
+  }
+  
+  async function showMobileImages(images) {
+    let currentIndex = 0;
+    
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;display:flex;flex-direction:column;align-items:center;padding:20px;';
+    
+    const updateModal = () => {
+      const img = images[currentIndex];
+      modal.innerHTML = '<div style="color:white;font-size:14px;margin-bottom:12px;">'+img.name+' ('+(currentIndex+1)+'/'+images.length+')</div><div style="flex:1;overflow:auto;width:100%;display:flex;justify-content:center;"><img src="'+img.data+'" style="max-width:100%;height:auto;border:1px solid #333;"/></div><div style="display:flex;gap:12px;margin-top:16px;"><button onclick="prevModule()" style="padding:10px 20px;border:none;border-radius:8px;background:#555;color:white;cursor:pointer;" '+(currentIndex===0?'disabled':'')+'>上一张</button><button onclick="nextModule()" style="padding:10px 20px;border:none;border-radius:8px;background:var(--primary);color:white;cursor:pointer;">'+(currentIndex===images.length-1?'完成':'下一张')+'</button></div><div style="color:#999;font-size:12px;margin-top:12px;">长按图片保存到相册</div>';
+    };
+    
+    window.prevModule = () => {
+      if(currentIndex > 0) {
+        currentIndex--;
+        updateModal();
+      }
+    };
+    
+    window.nextModule = () => {
+      if(currentIndex < images.length - 1) {
+        currentIndex++;
+        updateModal();
+      } else {
+        modal.remove();
+        delete window.prevModule;
+        delete window.nextModule;
+      }
+    };
+    
+    updateModal();
+    document.body.appendChild(modal);
   }
 </script>
 ''';

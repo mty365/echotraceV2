@@ -5943,6 +5943,207 @@ class DatabaseService {
     }
   }
 
+  /// 获取年度文本消息内容（用于词云分析）
+  /// [onlyMySent] 为 true 时只获取当前用户发送的消息
+  Future<List<String>> getTextMessagesForWordCloud({
+    int? year,
+    Set<String>? excludedUsernames,
+    int maxMessages = 50000,
+    bool onlyMySent = true,
+    String? myWxid,
+    Function(String message, {String level})? onLog,
+  }) async {
+    if (!isConnected) {
+      onLog?.call('词云分析：数据库未连接', level: 'error');
+      throw Exception('数据库未连接');
+    }
+
+    try {
+      final messages = <String>[];
+      onLog?.call('词云分析：开始获取消息数据库', level: 'debug');
+      final cachedDbs = await _getCachedMessageDatabases();
+      onLog?.call('词云分析：找到 ${cachedDbs.length} 个消息数据库', level: 'debug');
+      
+      if (cachedDbs.isEmpty) {
+        onLog?.call('词云分析：没有找到任何消息数据库！_sessionDbPath=$_sessionDbPath', level: 'warning');
+        return [];
+      }
+      
+      // 获取当前用户的 wxid
+      final effectiveMyWxid = myWxid ?? _currentAccountWxid;
+      onLog?.call('词云分析：当前用户 wxid: $effectiveMyWxid, 只统计自己发送: $onlyMySent', level: 'debug');
+      
+      final excludedTables =
+          await _getExcludedTableNames(excludedUsernames, cachedDbs);
+      onLog?.call('词云分析：排除 ${excludedTables.length} 个表', level: 'debug');
+
+      // 构建年份过滤条件
+      String yearFilter = '';
+      if (year != null) {
+        final startTime = DateTime(year, 1, 1).millisecondsSinceEpoch ~/ 1000;
+        final endTime = DateTime(year + 1, 1, 1).millisecondsSinceEpoch ~/ 1000;
+        yearFilter = ' AND create_time >= $startTime AND create_time < $endTime';
+        onLog?.call('词云分析：年份过滤 $year ($startTime - $endTime)', level: 'debug');
+      }
+
+      int totalTables = 0;
+      int tablesWithMessages = 0;
+      
+      // 内容字段候选列表（按优先级排序）
+      const contentCandidates = [
+        'display_content',
+        'message_content',
+        'content',
+        'WCDB_CT_message_content',
+      ];
+
+      for (final cachedDb in cachedDbs) {
+        // 如果指定了年份，必须遍历所有数据库，不受 maxMessages 限制
+        // 如果 maxMessages 很大（>= 100000），也继续遍历所有数据库
+        if (year != null || maxMessages >= 100000) {
+          // 继续遍历，不退出
+        } else if (messages.length >= maxMessages) {
+          break;
+        }
+
+        try {
+          // 如果只获取自己发送的消息，需要先获取当前用户的 rowid
+          int? myRowId;
+          if (onlyMySent && effectiveMyWxid != null) {
+            try {
+              final rowIdResult = await cachedDb.database.rawQuery(
+                'SELECT rowid FROM Name2Id WHERE user_name = ?',
+                [effectiveMyWxid],
+              );
+              if (rowIdResult.isNotEmpty) {
+                myRowId = rowIdResult.first['rowid'] as int?;
+                onLog?.call('词云分析：找到用户 rowid: $myRowId', level: 'debug');
+              }
+            } catch (e) {
+              onLog?.call('词云分析：获取用户 rowid 失败: $e', level: 'warning');
+            }
+          }
+          
+          final tables = await cachedDb.database.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'",
+          );
+          onLog?.call('词云分析：数据库 ${cachedDb.key} 有 ${tables.length} 个消息表', level: 'debug');
+
+          for (final tableRow in tables) {
+            // 如果指定了年份，必须遍历所有表，不受 maxMessages 限制
+            // 如果 maxMessages 很大（>= 100000），也继续遍历所有表
+            if (year != null || maxMessages >= 100000) {
+              // 继续遍历，不退出
+            } else if (messages.length >= maxMessages) {
+              break;
+            }
+            
+            final tableName = tableRow['name'] as String;
+            totalTables++;
+            if (excludedTables.contains(tableName)) continue;
+
+            try {
+              // 检测表结构，找到可用的内容字段
+              final pragmaRows = await cachedDb.database.rawQuery(
+                "PRAGMA table_info('$tableName')"
+              );
+              final cols = pragmaRows
+                  .map((row) => (row['name'] as String?)?.toLowerCase() ?? '')
+                  .toSet();
+              
+              // 找到可用的内容字段
+              String? contentColumn;
+              for (final candidate in contentCandidates) {
+                if (cols.contains(candidate.toLowerCase())) {
+                  contentColumn = candidate;
+                  break;
+                }
+              }
+              
+              if (contentColumn == null) {
+                onLog?.call('词云分析：表 $tableName 没有找到内容字段，跳过', level: 'debug');
+                continue;
+              }
+
+              // 构建发送者过滤条件
+              String senderFilter = '';
+              if (onlyMySent && myRowId != null) {
+                senderFilter = ' AND real_sender_id = $myRowId';
+              }
+
+              // 获取文本消息内容（local_type 1 和 244813135921 都是文本消息）
+              // 如果指定了年份或 remaining 很大，则不使用 LIMIT，获取所有符合条件的消息
+              final remaining = maxMessages - messages.length;
+              String query;
+              List<dynamic> queryArgs;
+              
+              // 如果指定了年份，必须获取该年份的所有消息，不使用 LIMIT
+              // 如果 remaining 很大（>= 100000），也不使用 LIMIT
+              if (year != null || remaining >= 100000) {
+                // 不使用 LIMIT，获取所有符合条件的消息
+                query = '''
+                SELECT $contentColumn as content
+                FROM $tableName
+                WHERE local_type IN (1, 244813135921)
+                  AND $contentColumn IS NOT NULL 
+                  AND $contentColumn != ''
+                  AND LENGTH($contentColumn) > 1
+                  AND $contentColumn NOT LIKE '[%'
+                  $yearFilter
+                  $senderFilter
+                ''';
+                queryArgs = [];
+                onLog?.call('词云分析：表 $tableName 获取所有符合条件的消息（年份: ${year ?? "全部"}）', level: 'debug');
+              } else {
+                query = '''
+                SELECT $contentColumn as content
+                FROM $tableName
+                WHERE local_type IN (1, 244813135921)
+                  AND $contentColumn IS NOT NULL 
+                  AND $contentColumn != ''
+                  AND LENGTH($contentColumn) > 1
+                  AND $contentColumn NOT LIKE '[%'
+                  $yearFilter
+                  $senderFilter
+                LIMIT ?
+                ''';
+                queryArgs = [remaining];
+              }
+              
+              final results = await cachedDb.database.rawQuery(query, queryArgs);
+
+              if (results.isNotEmpty) {
+                tablesWithMessages++;
+                onLog?.call('词云分析：表 $tableName 使用字段 $contentColumn，获取 ${results.length} 条我发送的消息', level: 'debug');
+              }
+              
+              for (final row in results) {
+                final content = row['content'] as String?;
+                if (content != null && content.isNotEmpty) {
+                  messages.add(content);
+                }
+              }
+            } catch (e) {
+              onLog?.call('词云分析：查询表 $tableName 失败: $e', level: 'warning');
+            }
+          }
+        } catch (e) {
+          onLog?.call('词云分析：访问数据库 ${cachedDb.key} 失败: $e', level: 'warning');
+        }
+      }
+
+      onLog?.call('词云分析：扫描了 $totalTables 个表，其中 $tablesWithMessages 个有消息，共获取 ${messages.length} 条我发送的消息${year != null ? "（年份：$year）" : ""}', level: 'info');
+      if (year != null) {
+        onLog?.call('词云分析：年份 $year 的统计完成，共获取 ${messages.length} 条我发送的消息', level: 'info');
+      }
+      return messages;
+    } catch (e) {
+      await logger.error('DatabaseService', '获取词云消息失败', e);
+      onLog?.call('词云分析：获取消息失败: $e', level: 'error');
+      return [];
+    }
+  }
+
   /// 分析响应速度（谁回复我最快）
   Future<List<Map<String, dynamic>>> analyzeResponseSpeed({
     required bool isMyResponse, // true: 我回复对方, false: 对方回复我
