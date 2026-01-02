@@ -217,7 +217,11 @@ class AnnualReportHtmlRenderer {
     );
 
     buffer.writeln(
-      _section('wordcloud', 'wordcloud', _buildWordCloudBody(wordCloudWords)),
+      _section(
+        'wordcloud',
+        'wordcloud',
+        _buildWordCloudBody(wordCloudWords, year),
+      ),
     );
 
     if (includeFormerFriends) {
@@ -826,7 +830,11 @@ $heatmap
 ''';
   }
 
-  static String _buildWordCloudBody(List words) {
+  static String _buildWordCloudBody(List words, int? year) {
+    final isAllTime = year == null;
+    final titleText = isAllTime ? '你历史以来的常用语' : '你在${year}年的年度常用语';
+    final subtitleText = isAllTime ? '历史以来，你说得最多的是：' : '这一年，你说得最多的是：';
+
     if (words.isEmpty) {
       return '''
 <div class="label-text">年度常用语</div>
@@ -881,8 +889,8 @@ $heatmap
 
     return '''
 <div class="label-text">年度常用语</div>
-<div class="hero-title">你的年度常用语</div>
-<div class="hero-desc" style="margin-bottom: 30px;">这一年，你说得最多的是：<br><span class="hl" style="font-size: 20px;">$topThree</span></div>
+<div class="hero-title">$titleText</div>
+<div class="hero-desc" style="margin-bottom: 30px;">$subtitleText<br><span class="hl" style="font-size: 20px;">$topThree</span></div>
 <div class="word-cloud-container">$wordItems</div>
 <div class="hero-desc" style="margin-top: 30px; font-size: 14px; color: #999;">句子越大、颜色越深，出现频率越高</div>
 ''';

@@ -12,6 +12,11 @@ import '../services/database_service.dart';
 import '../services/logger_service.dart';
 import '../services/wxid_scan_service.dart';
 import '../services/app_path_service.dart';
+import '../services/wx_key_service.dart';
+import '../services/wx_key_dll_injector.dart';
+import '../services/wx_key_remote_hook_controller.dart';
+import '../services/wx_image_key_service.dart';
+import '../services/wx_key_logger.dart';
 import '../widgets/toast_overlay.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path/path.dart' as p;
@@ -40,13 +45,13 @@ class _SettingsPageState extends State<SettingsPage>
   late final ToastOverlay _toast;
 
   bool _isLoading = false;
-  String? _statusMessage;
-  bool _isSuccess = false;
   String _databaseMode = 'backup'; // 'backup' 或 'realtime'
-  bool _showWxidInput = true; // 始终允许手动输入wxid
   bool _isScanningWxid = false; // 是否正在扫描wxid
   bool _debugMode = false; // 调试模式开关
-  String? _lastWxidPathChecked; // 最近扫描过wxid的路径，避免重复扫描
+  bool _isGettingDbKey = false;
+  bool _isGettingImageKey = false;
+  String? _dbKeyProgressMessage;
+  String? _imageKeyProgressMessage;
   // 记录初始配置，防止重复保存同样配置
   String _initialKey = '';
   String _initialPath = '';
@@ -75,6 +80,7 @@ class _SettingsPageState extends State<SettingsPage>
     _imageAesKeyController.dispose();
     _toast.dispose();
     _decryptService.dispose();
+    RemoteHookController.dispose();
     super.dispose();
   }
 
@@ -105,7 +111,7 @@ class _SettingsPageState extends State<SettingsPage>
         _initialImageAesKey = imageAesKey ?? '';
         _initialWxid = manualWxid ?? '';
         _debugMode = debugMode;
-        _showWxidInput = true; // 始终显示 wxid 输入框
+// 始终显示 wxid 输入框
       });
     }
   }
@@ -134,7 +140,6 @@ class _SettingsPageState extends State<SettingsPage>
       final dir = Directory(path);
       if (!await dir.exists()) {
         setState(() {
-          _showWxidInput = true;
         });
         return;
       }
@@ -142,7 +147,6 @@ class _SettingsPageState extends State<SettingsPage>
       final candidates = await _collectAccountCandidates(path);
 
       // 不隐藏输入框，仅记录状态
-      _lastWxidPathChecked = path;
 
       if (candidates.isEmpty) {
         _showMessage('未在该目录中找到账号目录，请手动输入wxid', false);
@@ -174,7 +178,6 @@ class _SettingsPageState extends State<SettingsPage>
       }
     } catch (e) {
       // 保持输入框显示
-      _lastWxidPathChecked = path;
     }
   }
 
@@ -322,7 +325,6 @@ class _SettingsPageState extends State<SettingsPage>
       _wxidController.text = wxid;
     });
     if (fromPath != null) {
-      _lastWxidPathChecked = fromPath;
       _showMessage('已从路径检测到账号: $wxid', true);
     }
   }
@@ -393,7 +395,6 @@ class _SettingsPageState extends State<SettingsPage>
 
     setState(() {
       _isLoading = true;
-      _statusMessage = null;
     });
 
     try {
@@ -475,6 +476,247 @@ class _SettingsPageState extends State<SettingsPage>
     }
   }
 
+  void _setDbKeyProgress(String message) {
+    if (_dbKeyProgressMessage == message) {
+      return;
+    }
+    _dbKeyProgressMessage = message;
+    if (!mounted) return;
+    _toast.show(context, message, success: !_isFailureMessage(message));
+  }
+
+  void _setImageKeyProgress(String message) {
+    if (_imageKeyProgressMessage == message) {
+      return;
+    }
+    _imageKeyProgressMessage = message;
+    if (!mounted) return;
+    _toast.show(context, message, success: !_isFailureMessage(message));
+  }
+
+  bool _isFailureMessage(String message) {
+    return message.contains('失败') ||
+        message.contains('错误') ||
+        message.contains('超时') ||
+        message.contains('取消');
+  }
+
+  Future<bool> _confirmCloseWeChat() async {
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('确认关闭微信'),
+        content: const Text('检测到微信正在运行，需要重启微信才能开始流程。\n是否关闭当前微信？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('关闭并继续'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _getDatabaseKey() async {
+    if (_isGettingDbKey) {
+      return;
+    }
+
+    setState(() {
+      _isGettingDbKey = true;
+      _dbKeyProgressMessage = '正在准备密钥获取环境...';
+    });
+
+    Timer? timeoutTimer;
+    try {
+      await WxKeyLogger.init();
+
+      final dllPath = await WxKeyService.extractDllToTemp();
+      _setDbKeyProgress('DLL已准备，正在检查微信进程...');
+
+      final isRunning = DllInjector.isProcessRunning('Weixin.exe');
+      if (isRunning) {
+        final shouldClose = await _confirmCloseWeChat();
+        if (!shouldClose) {
+          _setDbKeyProgress('已取消密钥获取');
+          return;
+        }
+        DllInjector.killWeChatProcesses();
+        await Future.delayed(const Duration(seconds: 2));
+      }
+
+      _setDbKeyProgress('正在启动微信...');
+      final launched = await DllInjector.launchWeChat();
+      if (!launched) {
+        _setDbKeyProgress('微信启动失败，请检查安装路径');
+        _showMessage('微信启动失败，请检查安装路径', false);
+        return;
+      }
+
+      _setDbKeyProgress('等待微信窗口加载...');
+      final windowAppeared = await DllInjector.waitForWeChatWindow(
+        maxWaitSeconds: 15,
+      );
+      if (!windowAppeared) {
+        _setDbKeyProgress('等待微信窗口超时，请重试');
+        _showMessage('等待微信窗口超时', false);
+        return;
+      }
+
+      _setDbKeyProgress('检测微信界面组件...');
+      final componentsReady = await DllInjector.waitForWeChatWindowComponents(
+        maxWaitSeconds: 15,
+      );
+      if (!componentsReady) {
+        _setDbKeyProgress('微信界面组件未就绪，请重试');
+        _showMessage('微信界面组件未就绪', false);
+        return;
+      }
+
+      _setDbKeyProgress('正在初始化Hook...');
+      if (!RemoteHookController.initialize(dllPath)) {
+        _setDbKeyProgress('DLL初始化失败');
+        _showMessage('DLL初始化失败', false);
+        return;
+      }
+
+      final mainPid = DllInjector.findMainWeChatPid();
+      if (mainPid == null) {
+        _setDbKeyProgress('未找到微信主进程');
+        _showMessage('未找到微信主进程', false);
+        return;
+      }
+
+      final completer = Completer<String>();
+      timeoutTimer = Timer(const Duration(seconds: 60), () {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            TimeoutException('获取密钥超时'),
+          );
+        }
+      });
+
+      final success = RemoteHookController.installHook(
+        targetPid: mainPid,
+        onKeyReceived: (keyHex) {
+          if (!completer.isCompleted) {
+            completer.complete(keyHex);
+          }
+        },
+        onStatus: (status, level) {
+          _setDbKeyProgress(status);
+        },
+      );
+
+      if (!success) {
+        final error = RemoteHookController.getLastErrorMessage();
+        _setDbKeyProgress('Hook安装失败: $error');
+        _showMessage('Hook安装失败: $error', false);
+        return;
+      }
+
+      _setDbKeyProgress('Hook已安装，请登录微信获取密钥...');
+
+      final key = await completer.future;
+      timeoutTimer.cancel();
+
+      if (!mounted) return;
+      setState(() {
+        _keyController.text = key;
+      });
+      _setDbKeyProgress('密钥获取成功，已填入输入框');
+      _showMessage('密钥获取成功，已填入输入框', true);
+    } on TimeoutException {
+      _setDbKeyProgress('获取密钥超时，请重试');
+      _showMessage('获取密钥超时，请重试', false);
+    } catch (e) {
+      _setDbKeyProgress('获取密钥失败: $e');
+      _showMessage('获取密钥失败: $e', false);
+    } finally {
+      timeoutTimer?.cancel();
+      RemoteHookController.dispose();
+      if (mounted) {
+        setState(() {
+          _isGettingDbKey = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _getImageKeys() async {
+    if (_isGettingImageKey) {
+      return;
+    }
+
+    setState(() {
+      _isGettingImageKey = true;
+      _imageKeyProgressMessage = '正在准备获取图片密钥...';
+    });
+
+    try {
+      await WxKeyLogger.init();
+      var result = await ImageKeyService.getImageKeys(
+        rootPath: _pathController.text.trim().isEmpty
+            ? null
+            : _pathController.text.trim(),
+        preferredWxid: _wxidController.text.trim().isEmpty
+            ? null
+            : _wxidController.text.trim(),
+        onProgress: _setImageKeyProgress,
+      );
+
+      if (!result.success && result.needManualSelection) {
+        final manualDirectory =
+            await ImageKeyService.selectWeChatCacheDirectory();
+        if (manualDirectory == null || manualDirectory.isEmpty) {
+          _setImageKeyProgress('已取消目录选择');
+          return;
+        }
+        result = await ImageKeyService.getImageKeys(
+          manualDirectory: manualDirectory,
+          rootPath: _pathController.text.trim().isEmpty
+              ? null
+              : _pathController.text.trim(),
+          preferredWxid: _wxidController.text.trim().isEmpty
+              ? null
+              : _wxidController.text.trim(),
+          onProgress: _setImageKeyProgress,
+        );
+      }
+
+      if (result.success && result.xorKey != null && result.aesKey != null) {
+        final xorHex =
+            result.xorKey!.toRadixString(16).toUpperCase().padLeft(2, '0');
+        setState(() {
+          _imageXorKeyController.text = '0x$xorHex';
+          _imageAesKeyController.text = result.aesKey!;
+        });
+        _setImageKeyProgress('图片密钥获取成功，已填入输入框');
+        _showMessage('图片密钥获取成功，已填入输入框', true);
+      } else {
+        final error = result.error ?? '获取图片密钥失败';
+        _setImageKeyProgress(error);
+        _showMessage(error, false);
+      }
+    } catch (e) {
+      _setImageKeyProgress('获取图片密钥失败: $e');
+      _showMessage('获取图片密钥失败: $e', false);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGettingImageKey = false;
+        });
+      }
+    }
+  }
+
   Future<void> _saveConfig() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -487,7 +729,6 @@ class _SettingsPageState extends State<SettingsPage>
 
     setState(() {
       _isLoading = true;
-      _statusMessage = null;
     });
 
     try {
@@ -572,7 +813,6 @@ class _SettingsPageState extends State<SettingsPage>
       _initialWxid = wxid;
       _initialImageXorKey = imageXorKey;
       _initialImageAesKey = imageAesKey;
-      _lastWxidPathChecked = path;
     } catch (e) {
       _showMessage('保存配置失败: $e', false);
     } finally {
@@ -588,8 +828,6 @@ class _SettingsPageState extends State<SettingsPage>
     if (!mounted) return;
 
     setState(() {
-      _statusMessage = message;
-      _isSuccess = success;
     });
 
     _toast.show(context, message, success: success);
@@ -620,8 +858,6 @@ class _SettingsPageState extends State<SettingsPage>
   void _updateScanProgress(String message, {bool success = true}) {
     if (!mounted) return;
     setState(() {
-      _statusMessage = message;
-      _isSuccess = success;
     });
   }
 
@@ -653,7 +889,6 @@ class _SettingsPageState extends State<SettingsPage>
         _showMessage(failMsg, false);
         _logScanDetail(failMsg);
         setState(() {
-          _showWxidInput = true;
         });
         return;
       }
@@ -827,45 +1062,68 @@ class _SettingsPageState extends State<SettingsPage>
               context,
               title: '解密密钥',
               subtitle: '请输入64位十六进制密钥',
-              child: TextFormField(
-                controller: _keyController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  hintText: '例如: a1b2c3d4e5f6...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.grey.shade300,
-                      width: 1.5,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextFormField(
+                    controller: _keyController,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      hintText: '例如: a1b2c3d4e5f6...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Colors.grey.shade300,
+                          width: 1.5,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Colors.grey.shade300,
+                          width: 1.5,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 2.0,
+                        ),
+                      ),
                     ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return '请输入密钥';
+                      }
+                      if (value.length != 64) {
+                        return '密钥长度必须为64个字符';
+                      }
+                      if (!RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
+                        return '密钥必须为十六进制格式';
+                      }
+                      return null;
+                    },
                   ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.grey.shade300,
-                      width: 1.5,
-                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isGettingDbKey ? null : _getDatabaseKey,
+                          icon: const Icon(Icons.key),
+                          label: Text(_isGettingDbKey ? '正在获取...' : '自动获取密钥'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Theme.of(context).colorScheme.primary,
-                      width: 2.0,
-                    ),
-                  ),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return '请输入密钥';
-                  }
-                  if (value.length != 64) {
-                    return '密钥长度必须为64个字符';
-                  }
-                  if (!RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
-                    return '密钥必须为十六进制格式';
-                  }
-                  return null;
-                },
+                ],
               ),
             ),
             const SizedBox(height: 24),
@@ -1080,36 +1338,6 @@ class _SettingsPageState extends State<SettingsPage>
             ),
 
             const SizedBox(height: 32),
-
-            // 状态消息
-            if (_statusMessage != null)
-              Container(
-                padding: const EdgeInsets.all(16),
-                margin: const EdgeInsets.only(bottom: 24),
-                decoration: BoxDecoration(
-                  color: _isSuccess
-                      ? Colors.green.withValues(alpha: 0.1)
-                      : Colors.red.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: _isSuccess ? Colors.green : Colors.red,
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _statusMessage!,
-                        style: TextStyle(
-                          color: _isSuccess ? Colors.green : Colors.red,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
           ],
         ),
       ),
@@ -1285,6 +1513,26 @@ class _SettingsPageState extends State<SettingsPage>
                   return null;
                 },
               ),
+            ),
+            const SizedBox(height: 16),
+
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isGettingImageKey ? null : _getImageKeys,
+                    icon: const Icon(Icons.image),
+                    label:
+                        Text(_isGettingImageKey ? '正在获取...' : '自动获取图片密钥'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
 

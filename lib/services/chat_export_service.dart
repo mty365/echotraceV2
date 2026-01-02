@@ -418,7 +418,9 @@ class _MediaExportHelper {
       try {
         final decodeFuture = voiceService
             .ensureVoiceDecoded(message, _options.sessionUsername)
-            .catchError((_) => null);
+            .catchError((_) {
+          return outputFile;
+        });
         await Future.any([
           decodeFuture,
           _waitForFileReady(outputFile, const Duration(seconds: 90)),

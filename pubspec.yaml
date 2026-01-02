@@ -1,7 +1,7 @@
 name: echotrace
 description: "A new Flutter project."
 publish_to: 'none'
-version: 2.4.9+1
+version: 3.0.0+1
 
 environment:
   sdk: ^3.9.2
@@ -49,6 +49,7 @@ dependencies:
   
   # FFI 用于直接调用 native 库
   ffi: ^2.1.0
+  win32: ^5.5.1
   
   # Excel 导出
   syncfusion_flutter_xlsio: ^31.2.4

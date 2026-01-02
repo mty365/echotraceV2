@@ -1346,6 +1346,12 @@ class AnalyticsBackgroundService {
     }
     await logger.debug('AnnualReport', '任务列表: ${taskNames.join(", ")}');
 
+    int updateProgress(String taskName, String status, int progress) {
+      taskProgress[taskName] = progress;
+      taskStatus[taskName] = status;
+      return taskProgress.values.reduce((a, b) => a + b) ~/ taskNames.length;
+    }
+
     // 创建进度回调包装器
     AnalyticsProgressCallback createProgressCallback(String taskName) {
       return (
@@ -1356,24 +1362,25 @@ class AnalyticsBackgroundService {
         int? elapsedSeconds,
         int? estimatedRemainingSeconds,
       }) {
-        taskProgress[taskName] = (current / total * 100).toInt();
-        taskStatus[taskName] = current >= total ? '已完成' : '进行中';
-
-        // 计算总体进度
-        final totalProgress =
-            taskProgress.values.reduce((a, b) => a + b) ~/ taskNames.length;
+        final status = current >= total ? '已完成' : '进行中';
+        final totalProgress = updateProgress(
+          taskName,
+          status,
+          (current / total * 100).toInt(),
+        );
         logger.debug(
           'AnnualReport',
           '任务进度: $taskName - $stage ($current/$total), 总进度: $totalProgress%',
         );
-        progressCallback(taskName, taskStatus[taskName]!, totalProgress);
+        progressCallback(taskName, status, totalProgress);
       };
     }
 
     // 串行执行所有任务，避免数据库锁定（一次只执行一个Isolate）
-    // 每个任务都有5分钟超时保护
+    // 每个任务都有5分钟超时保护，曾经的好朋友任务可适当延长
     final timeout = const Duration(minutes: 5);
     await logger.debug('AnnualReport', '任务超时设置: ${timeout.inMinutes} 分钟');
+    final formerFriendsTimeout = Duration(minutes: timeout.inMinutes + 5);
 
     await logger.info('AnnualReport', '开始任务 1/13: 绝对核心好友');
     final coreFriendsData =
@@ -1553,10 +1560,19 @@ class AnalyticsBackgroundService {
             filterYear,
             createProgressCallback('曾经的好朋友'),
           ).timeout(
-            timeout,
+            formerFriendsTimeout,
             onTimeout: () {
-              logger.error('AnnualReport', '任务超时: 曾经的好朋友');
-              throw TimeoutException('分析曾经的好朋友超时');
+              logger.warning('AnnualReport', '任务超时: 曾经的好朋友，已跳过');
+              final totalProgress = updateProgress(
+                '曾经的好朋友',
+                '超时，已跳过',
+                100,
+              );
+              progressCallback('曾经的好朋友', '超时，已跳过', totalProgress);
+              return {
+                'results': <Map<String, dynamic>>[],
+                'stats': {'timedOut': true},
+              };
             },
           );
       await logger.info('AnnualReport', '完成任务 13/13: 曾经的好朋友');
