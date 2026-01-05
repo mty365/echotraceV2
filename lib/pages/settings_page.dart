@@ -296,7 +296,7 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _selectDatabasePath() async {
     try {
       String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '选择微信数据库根目录 (通常是 xwechat_files)',
+        dialogTitle: '选择微信数据库根目录（与微信-设置-账号与存储-存储位置一致）',
       );
 
       if (selectedDirectory != null) {
@@ -451,7 +451,7 @@ class _SettingsPageState extends State<SettingsPage>
       final accountCandidates = await _collectAccountCandidates(path);
       if (accountCandidates.isEmpty) {
         _showMessage(
-          '未找到 db_storage 目录\n请确认选择了正确的微信数据库根目录（如 xwechat_files）',
+          '未找到 db_storage 目录\n请将数据库根目录与微信-设置-账号与存储-存储位置保持一致',
           false,
         );
         return;
@@ -830,9 +830,9 @@ class _SettingsPageState extends State<SettingsPage>
                 : '备份模式';
             _showMessage('数据库连接成功！当前使用$actualModeText', true);
 
-            final targetPage = redirectPage ?? 'chat';
-            final delay = redirectDelay ?? const Duration(seconds: 2);
-            if (targetPage.isNotEmpty) {
+            final targetPage = redirectPage?.trim();
+            if (targetPage != null && targetPage.isNotEmpty) {
+              final delay = redirectDelay ?? const Duration(seconds: 2);
               Future.delayed(delay, () {
                 if (mounted) {
                   context.read<AppState>().setCurrentPage(targetPage);
@@ -1194,13 +1194,14 @@ class _SettingsPageState extends State<SettingsPage>
             _buildInputSection(
               context,
               title: '数据库根目录',
-              subtitle: '自动检测或手动选择xwechat_files目录',
+              subtitle: '自动检测或手动选择与微信-设置-账号与存储-存储位置一致的目录',
               child: Column(
                 children: [
                   TextFormField(
                     controller: _pathController,
                     decoration: InputDecoration(
-                      hintText: '点击自动检测或手动选择xwechat_files目录',
+                      hintText:
+                          '点击自动检测或手动选择与微信-设置-账号与存储-存储位置一致的目录',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(
@@ -1377,6 +1378,13 @@ class _SettingsPageState extends State<SettingsPage>
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return '请输入wxid';
+                      }
+                      final isWxidFormat = RegExp(
+                        r'^wxid_[^_]+_[a-zA-Z0-9]{4}$',
+                        caseSensitive: false,
+                      ).hasMatch(value.trim());
+                      if (!isWxidFormat) {
+                        return '请到数据库根目录的文件夹下复制wxid开头的文件夹名字并填入（格式应为wxid_*_*）';
                       }
                       return null;
                     },

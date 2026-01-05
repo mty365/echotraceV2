@@ -3863,7 +3863,7 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
 
     final hint = isMissingDb
         ? '未找到对应账号的数据库文件，请先在「数据管理」页面解密当前选择的 wxid。'
-        : '请检查数据库解密状态和密钥配置，或前往数据管理页面查看解密状态。';
+        : '请确保数据管理中所有数据库均已解密';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
@@ -3923,10 +3923,10 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
               ),
             )
           else
-            Text(
+            _buildErrorMessageText(
+              theme,
               message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
+              theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
               ),
             ),
@@ -3964,6 +3964,41 @@ class _ChatPageState extends State<ChatPage> with TickerProviderStateMixin {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildErrorMessageText(
+    ThemeData theme,
+    String message,
+    TextStyle? style,
+  ) {
+    const emphasisText = '您真的解密了吗？';
+    final resolvedStyle = style ?? const TextStyle();
+    final trimmed = message.trimRight();
+    if (!trimmed.endsWith(emphasisText)) {
+      return Text(
+        message,
+        textAlign: TextAlign.center,
+        style: resolvedStyle,
+      );
+    }
+
+    final body =
+        trimmed.substring(0, trimmed.length - emphasisText.length).trimRight();
+    return Text.rich(
+      TextSpan(
+        children: [
+          if (body.isNotEmpty) TextSpan(text: '$body\n', style: resolvedStyle),
+          TextSpan(
+            text: emphasisText,
+            style: resolvedStyle.copyWith(
+              color: theme.colorScheme.error,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
     );
   }
 

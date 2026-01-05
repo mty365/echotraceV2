@@ -715,10 +715,10 @@ class _ChatExportPageState extends State<ChatExportPage>
             ),
           ),
           const SizedBox(height: 12),
-          Text(
+          _buildErrorMessageText(
+            theme,
             isMissingDb ? '请先在「数据管理」页面解密对应账号的数据库。' : message,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
+            theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               height: 1.5,
             ),
@@ -759,6 +759,41 @@ class _ChatExportPageState extends State<ChatExportPage>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildErrorMessageText(
+    ThemeData theme,
+    String message,
+    TextStyle? style,
+  ) {
+    const emphasisText = '您真的解密了吗？';
+    final resolvedStyle = style ?? const TextStyle();
+    final trimmed = message.trimRight();
+    if (!trimmed.endsWith(emphasisText)) {
+      return Text(
+        message,
+        textAlign: TextAlign.center,
+        style: resolvedStyle,
+      );
+    }
+
+    final body =
+        trimmed.substring(0, trimmed.length - emphasisText.length).trimRight();
+    return Text.rich(
+      TextSpan(
+        children: [
+          if (body.isNotEmpty) TextSpan(text: '$body\n', style: resolvedStyle),
+          TextSpan(
+            text: emphasisText,
+            style: resolvedStyle.copyWith(
+              color: theme.colorScheme.error,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
     );
   }
 

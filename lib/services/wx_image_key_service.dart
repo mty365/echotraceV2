@@ -482,7 +482,7 @@ class ImageKeyService {
   static Future<String?> selectWeChatCacheDirectory() async {
     try {
       String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '请选择微信账号目录（通常在 Documents/xwechat_files 下）',
+        dialogTitle: '请选择微信账号目录（与微信-设置-账号与存储-存储位置一致）',
       );
 
       return selectedDirectory;

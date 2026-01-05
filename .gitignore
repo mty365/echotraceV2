@@ -47,6 +47,7 @@ app.*.map.json
 
 # Android/Gradle caches
 /third_party/flutter_lame/android/.gradle/
+/third_party/flutter_lame/android/.cxx/
 
 # Go 解密模块
 go_decrypt/go.sum

@@ -674,8 +674,10 @@ class AppState extends ChangeNotifier {
     }
 
     // 所有重试都失败
+    final errorDetail = lastError?.toString() ?? '未知错误';
+    final needsDecryptHint = errorDetail.contains('isConnected');
     _errorMessage =
-        '数据库连接失败（已重试$retryCount次）: ${lastError?.toString() ?? "未知错误"}';
+        '数据库连接失败（已重试$retryCount次）: $errorDetail${needsDecryptHint ? '\n您真的解密了吗？' : ''}';
     await logger.error('AppState', _errorMessage!);
     _isLoading = false;
     notifyListeners();

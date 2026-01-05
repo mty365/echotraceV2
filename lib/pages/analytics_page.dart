@@ -1072,6 +1072,9 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
         lower.contains('不存在') ||
         lower.contains('no such file') ||
         lower.contains('not found');
+    final hint = isMissingDb
+        ? '请先在「数据管理」页面解密对应账号的数据库。'
+        : '请确保数据管理中所有数据库均已解密';
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 400),
@@ -1115,11 +1118,19 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
           ),
           const SizedBox(height: 12),
           Text(
-            isMissingDb ? '请先在「数据管理」页面解密对应账号的数据库。' : message,
+            hint,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _buildErrorMessageText(
+            theme,
+            message,
+            theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
             ),
           ),
           const SizedBox(height: 28),
@@ -1158,6 +1169,41 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildErrorMessageText(
+    ThemeData theme,
+    String message,
+    TextStyle? style,
+  ) {
+    const emphasisText = '您真的解密了吗？';
+    final resolvedStyle = style ?? const TextStyle();
+    final trimmed = message.trimRight();
+    if (!trimmed.endsWith(emphasisText)) {
+      return Text(
+        message,
+        textAlign: TextAlign.center,
+        style: resolvedStyle,
+      );
+    }
+
+    final body =
+        trimmed.substring(0, trimmed.length - emphasisText.length).trimRight();
+    return Text.rich(
+      TextSpan(
+        children: [
+          if (body.isNotEmpty) TextSpan(text: '$body\n', style: resolvedStyle),
+          TextSpan(
+            text: emphasisText,
+            style: resolvedStyle.copyWith(
+              color: theme.colorScheme.error,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
     );
   }
 
