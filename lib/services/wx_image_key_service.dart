@@ -214,7 +214,7 @@ class ImageKeyService {
       files.sort((a, b) {
         final pathA = a.path;
         final pathB = b.path;
-        final regExp = RegExp(r'(\\d{4}-\\d{2})');
+        final regExp = RegExp(r'(\d{4}-\d{2})');
         final matchA = regExp.firstMatch(pathA);
         final matchB = regExp.firstMatch(pathB);
         if (matchA != null && matchB != null) {
@@ -284,8 +284,18 @@ class ImageKeyService {
     for (final file in templateFiles) {
       try {
         final bytes = await file.readAsBytes();
-        if (bytes.length > 32) {
-          return bytes.sublist(0, 32);
+        if (bytes.length < 0x1F) {
+          continue;
+        }
+
+        final header = bytes.sublist(0, 6);
+        if (header[0] == 0x07 &&
+            header[1] == 0x08 &&
+            header[2] == 0x56 &&
+            header[3] == 0x32 &&
+            header[4] == 0x08 &&
+            header[5] == 0x07) {
+          return bytes.sublist(0xF, 0x1F);
         }
       } catch (e) {
         continue;
@@ -310,7 +320,10 @@ class ImageKeyService {
         );
       }
 
-      return decrypted[0] == 0xFF && decrypted[1] == 0xD8;
+      return decrypted.length >= 3 &&
+          decrypted[0] == 0xFF &&
+          decrypted[1] == 0xD8 &&
+          decrypted[2] == 0xFF;
     } catch (e) {
       return false;
     }
