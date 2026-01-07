@@ -525,7 +525,12 @@ class _SettingsPageState extends State<SettingsPage>
     }
     _dbKeyProgressMessage = message;
     if (!mounted) return;
-    _toast.show(context, message, success: !_isFailureMessage(message));
+    _toast.show(
+      context,
+      message,
+      success: !_isFailureMessage(message),
+      duration: _resolveToastDuration(message),
+    );
   }
 
   void _setImageKeyProgress(String message) {
@@ -534,7 +539,12 @@ class _SettingsPageState extends State<SettingsPage>
     }
     _imageKeyProgressMessage = message;
     if (!mounted) return;
-    _toast.show(context, message, success: !_isFailureMessage(message));
+    _toast.show(
+      context,
+      message,
+      success: !_isFailureMessage(message),
+      duration: _resolveToastDuration(message),
+    );
   }
 
   bool _isFailureMessage(String message) {
@@ -879,7 +889,19 @@ class _SettingsPageState extends State<SettingsPage>
     setState(() {
     });
 
-    _toast.show(context, message, success: success);
+    _toast.show(
+      context,
+      message,
+      success: success,
+      duration: _resolveToastDuration(message),
+    );
+  }
+
+  Duration _resolveToastDuration(String message) {
+    if (message.contains('建议操作步骤')) {
+      return const Duration(seconds: 12);
+    }
+    return const Duration(seconds: 4);
   }
 
   Future<void> _selectDocumentsPath() async {
