@@ -1510,7 +1510,6 @@ class _SettingsPageState extends State<SettingsPage>
               subtitle: '2位十六进制密钥（支持0x前缀），例如：0x53 或 53',
               child: TextFormField(
                 controller: _imageXorKeyController,
-                obscureText: true,
                 decoration: InputDecoration(
                   hintText: '例如: 0x12 或 A3',
                   border: OutlineInputBorder(
@@ -1562,7 +1561,6 @@ class _SettingsPageState extends State<SettingsPage>
               subtitle: '至少16个字符的字母数字字符串，从微信进程内存获取',
               child: TextFormField(
                 controller: _imageAesKeyController,
-                obscureText: true,
                 decoration: InputDecoration(
                   hintText: '例如: b123456789012345...',
                   border: OutlineInputBorder(

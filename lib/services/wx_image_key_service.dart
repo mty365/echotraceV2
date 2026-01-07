@@ -334,135 +334,254 @@ class ImageKeyService {
     Uint8List ciphertext,
     void Function(String message)? onProgress,
   ) async {
-    final hProcess = OpenProcess(
-      PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-      FALSE,
-      pid,
-    );
-    if (hProcess == 0) {
-      return null;
-    }
-
     try {
-      final mInfo = calloc<MEMORY_BASIC_INFORMATION>();
-      final infoSize = sizeOf<MEMORY_BASIC_INFORMATION>();
-      var address = 0;
-      var scannedRegions = 0;
+      await WxKeyLogger.info('开始内存搜索，目标进程: $pid');
 
-      while (VirtualQueryEx(
-            hProcess,
-            Pointer.fromAddress(address),
-            mInfo,
-            infoSize,
-          ) !=
-          0) {
-        final protect = mInfo.ref.Protect;
-        final state = mInfo.ref.State;
+      final hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+      if (hProcess == 0) {
+        final lastError = GetLastError();
+        await WxKeyLogger.error('无法打开进程进行内存搜索，错误码: $lastError');
+        return null;
+      }
 
-        if (state == MEM_COMMIT &&
-            (protect == PAGE_READWRITE || protect == PAGE_READONLY)) {
-          final regionSize = mInfo.ref.RegionSize;
-          final data = await _readMemory(
-            hProcess,
-            mInfo.ref.BaseAddress.address,
-            regionSize,
-          );
+      try {
+        final memoryRegions = _getMemoryRegions(hProcess);
+        await WxKeyLogger.info('找到 ${memoryRegions.length} 个内存区域');
+        final totalRegions = memoryRegions.length;
+        if (totalRegions == 0) {
+          onProgress?.call('未找到可扫描的内存区域');
+        }
 
-          if (data != null) {
-            final key = _searchKeyInData(data, ciphertext);
-            if (key != null) {
-              return key;
+        var scannedCount = 0;
+        var skippedCount = 0;
+        const chunkSize = 4 * 1024 * 1024;
+        const overlap = 65;
+
+        for (final region in memoryRegions) {
+          final baseAddress = region.$1;
+          final regionSize = region.$2;
+
+          if (regionSize > 100 * 1024 * 1024) {
+            skippedCount++;
+            await WxKeyLogger.warning(
+              '跳过过大内存区域: 0x${baseAddress.toRadixString(16)} size=$regionSize',
+            );
+            continue;
+          }
+
+          scannedCount++;
+          if (scannedCount % 10 == 0) {
+            onProgress?.call('正在扫描微信内存... ($scannedCount/$totalRegions)');
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          }
+
+          var offset = 0;
+          Uint8List? trailing;
+
+          while (offset < regionSize) {
+            final remaining = regionSize - offset;
+            final currentChunkSize =
+                remaining > chunkSize ? chunkSize : remaining;
+            final chunk = _readProcessMemory(
+              hProcess,
+              baseAddress + offset,
+              currentChunkSize,
+            );
+
+            if (chunk == null || chunk.isEmpty) {
+              await WxKeyLogger.warning(
+                '跳过无法读取的内存块: base=0x${(baseAddress + offset).toRadixString(16)} size=$currentChunkSize',
+              );
+              offset += currentChunkSize;
+              trailing = null;
+              continue;
             }
-          }
 
-          scannedRegions++;
-          if (scannedRegions % 120 == 0) {
-            onProgress?.call('正在扫描内存区域: $scannedRegions');
+            Uint8List dataToScan;
+            if (trailing != null && trailing.isNotEmpty) {
+              dataToScan = Uint8List(trailing.length + chunk.length);
+              dataToScan.setAll(0, trailing);
+              dataToScan.setAll(trailing.length, chunk);
+            } else {
+              dataToScan = chunk;
+            }
+
+            for (var i = 0; i < dataToScan.length - 34; i++) {
+              final byte = dataToScan[i];
+              if (_isAlphaNumAscii(byte)) {
+                continue;
+              }
+
+              var isValid = true;
+              for (var j = 1; j <= 32; j++) {
+                if (i + j >= dataToScan.length ||
+                    !_isAlphaNumAscii(dataToScan[i + j])) {
+                  isValid = false;
+                  break;
+                }
+              }
+
+              if (isValid) {
+                if (i + 33 < dataToScan.length &&
+                    _isAlphaNumAscii(dataToScan[i + 33])) {
+                  isValid = false;
+                }
+              }
+
+              if (isValid) {
+                try {
+                  final keyBytes = dataToScan.sublist(i + 1, i + 33);
+                  if (_verifyKey(ciphertext, keyBytes)) {
+                    await WxKeyLogger.success('在第 $scannedCount 个区域找到AES密钥');
+                    onProgress?.call('已找到AES密钥，正在校验...');
+                    CloseHandle(hProcess);
+                    return String.fromCharCodes(keyBytes);
+                  }
+                } catch (e) {
+                  await WxKeyLogger.warning('校验密钥时出现异常: $e');
+                }
+              }
+            }
+
+            for (var i = 0; i < dataToScan.length - 65; i++) {
+              if (!_isUtf16AsciiKey(dataToScan, i)) {
+                continue;
+              }
+
+              try {
+                final keyBytes = Uint8List(32);
+                for (var j = 0; j < 32; j++) {
+                  keyBytes[j] = dataToScan[i + (j * 2)];
+                }
+
+                if (_verifyKey(ciphertext, keyBytes)) {
+                  await WxKeyLogger.success(
+                    '在第 $scannedCount 个区域找到AES密钥(UTF-16)',
+                  );
+                  onProgress?.call('已找到AES密钥，正在校验...');
+                  CloseHandle(hProcess);
+                  return String.fromCharCodes(keyBytes);
+                }
+              } catch (e) {
+                await WxKeyLogger.warning('校验UTF-16密钥时出现异常: $e');
+              }
+            }
+
+            final start = dataToScan.length - overlap;
+            trailing = dataToScan.sublist(start < 0 ? 0 : start);
+            offset += currentChunkSize;
           }
         }
 
-        address = mInfo.ref.BaseAddress.address + mInfo.ref.RegionSize;
-      }
-    } finally {
-      CloseHandle(hProcess);
-    }
-
-    return null;
-  }
-
-  static String? _searchKeyInData(Uint8List data, Uint8List ciphertext) {
-    try {
-      final dataToScan =
-          data.length > 10 * 1024 * 1024 ? data.sublist(0, 10 * 1024 * 1024) : data;
-
-      for (int i = 0; i < dataToScan.length - 32; i++) {
-        final candidate = dataToScan[i];
-        if (candidate < 48 || candidate > 122) continue;
-
-        if (!_isUtf16AsciiKey(dataToScan, i) &&
-            !_isAsciiKey(dataToScan, i)) {
-          continue;
-        }
-
-        if (_isAsciiKey(dataToScan, i)) {
-          final keyBytes = dataToScan.sublist(i, i + 32);
-          if (_verifyKey(ciphertext, keyBytes)) {
-            return String.fromCharCodes(keyBytes);
-          }
-        } else {
-          final keyBytes = Uint8List(32);
-          for (int j = 0; j < 32; j++) {
-            keyBytes[j] = dataToScan[i + (j * 2)];
-          }
-          if (_verifyKey(ciphertext, keyBytes)) {
-            return String.fromCharCodes(keyBytes);
-          }
-        }
+        await WxKeyLogger.warning(
+          '内存搜索完成但未找到密钥，扫描: $scannedCount, 跳过: $skippedCount',
+        );
+        CloseHandle(hProcess);
+        return null;
+      } catch (e) {
+        await WxKeyLogger.error('内存搜索异常: $e');
+        CloseHandle(hProcess);
+        return null;
       }
     } catch (e) {
+      await WxKeyLogger.error('获取内存密钥失败: $e');
       return null;
     }
-
-    return null;
   }
 
-  static bool _isAsciiKey(Uint8List data, int start) {
-    try {
-      for (int i = 0; i < 32; i++) {
-        final b = data[start + i];
-        if ((b < 48 || b > 122) || (b > 57 && b < 65) || (b > 90 && b < 97)) {
-          return false;
-        }
-      }
-      return true;
-    } catch (e) {
-      return false;
-    }
+  static bool _isAlphaNumAscii(int byte) {
+    return (byte >= 0x61 && byte <= 0x7A) ||
+        (byte >= 0x41 && byte <= 0x5A) ||
+        (byte >= 0x30 && byte <= 0x39);
   }
 
   static bool _isUtf16AsciiKey(Uint8List data, int start) {
-    try {
-      for (int i = 0; i < 32; i++) {
-        final ascii = data[start + (i * 2)];
-        final zero = data[start + (i * 2) + 1];
-        if (zero != 0) return false;
-        if ((ascii < 48 || ascii > 122) ||
-            (ascii > 57 && ascii < 65) ||
-            (ascii > 90 && ascii < 97)) {
-          return false;
-        }
-      }
-      return true;
-    } catch (e) {
+    if (start + 64 > data.length) {
       return false;
     }
+
+    for (var j = 0; j < 32; j++) {
+      final charByte = data[start + (j * 2)];
+      final nullByte = data[start + (j * 2) + 1];
+      if (nullByte != 0x00 || !_isAlphaNumAscii(charByte)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
-  static Future<Uint8List?> _readMemory(
+  static List<(int, int)> _getMemoryRegions(int hProcess) {
+    final regions = <(int, int)>[];
+    var address = 0;
+    final mbi = calloc<MEMORY_BASIC_INFORMATION>();
+
+    try {
+      final kernel32 = DynamicLibrary.open('kernel32.dll');
+      final virtualQueryEx = kernel32.lookupFunction<
+          IntPtr Function(
+            IntPtr,
+            Pointer,
+            Pointer<MEMORY_BASIC_INFORMATION>,
+            IntPtr,
+          ),
+          int Function(
+            int,
+            Pointer,
+            Pointer<MEMORY_BASIC_INFORMATION>,
+            int,
+          )>('VirtualQueryEx');
+
+      while (address >= 0 && address < 0x7FFFFFFFFFFF) {
+        final result = virtualQueryEx(
+          hProcess,
+          Pointer.fromAddress(address),
+          mbi,
+          sizeOf<MEMORY_BASIC_INFORMATION>(),
+        );
+
+        if (result == 0) {
+          break;
+        }
+
+        if (mbi.ref.State == MEM_COMMIT &&
+            _isReadableProtect(mbi.ref.Protect) &&
+            _isCandidateRegionType(mbi.ref.Type)) {
+          regions.add((mbi.ref.BaseAddress.address, mbi.ref.RegionSize));
+        }
+
+        final nextAddress = address + mbi.ref.RegionSize;
+        if (nextAddress <= address) {
+          break;
+        }
+        address = nextAddress;
+      }
+    } finally {
+      free(mbi);
+    }
+
+    return regions;
+  }
+
+  static bool _isReadableProtect(int protect) {
+    if (protect == PAGE_NOACCESS) {
+      return false;
+    }
+    if ((protect & PAGE_GUARD) != 0) {
+      return false;
+    }
+    return true;
+  }
+
+  static bool _isCandidateRegionType(int type) {
+    return type == MEM_PRIVATE || type == MEM_MAPPED || type == MEM_IMAGE;
+  }
+
+  static Uint8List? _readProcessMemory(
     int hProcess,
     int address,
     int size,
-  ) async {
+  ) {
     try {
       final buffer = calloc<Uint8>(size);
       final bytesRead = calloc<SIZE_T>();
@@ -487,7 +606,7 @@ class ImageKeyService {
         free(bytesRead);
       }
     } catch (e) {
-      await WxKeyLogger.error('读取进程内存失败: $e');
+      unawaited(WxKeyLogger.error('读取进程内存失败: $e'));
       return null;
     }
   }
